@@ -26,7 +26,7 @@ export default function App() {
   const [status, setStatus] = useState<'loading' | 'webgl' | 'fallback'>('loading')
   const [supported, setSupported] = useState<boolean | null>(null)
   const coreAnchor = useRef<HTMLDivElement>(null)
-  const motion = useRef<SceneMotion>({ time: 0.6, pointer: new Vector2(), running: true, visible: true, variant: 'core', speed: 1, bloom: 1.6 }).current
+  const motion = useRef<SceneMotion>({ time: 0.6, pointer: new Vector2(), pointerActive: false, pointerRevision: 0, running: true, visible: true, variant: 'core', speed: 1, bloom: 1.6 }).current
   motion.running = !paused && !reduced
   motion.visible = visible
   const ready = useCallback(() => setStatus('webgl'), [])
@@ -51,8 +51,10 @@ export default function App() {
     if (event.pointerType !== 'mouse' || !motion.running) return
     const bounds = event.currentTarget.getBoundingClientRect()
     motion.pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -(event.clientY - bounds.top) / bounds.height * 2 + 1)
+    motion.pointerActive = true
+    motion.pointerRevision++
   }
-  return <main id="home" className="universe" data-render-mode={status} onPointerMove={move} onPointerLeave={() => motion.pointer.set(0, 0)}>
+  return <main id="home" className="universe" data-render-mode={status} onPointerMove={move} onPointerLeave={() => { motion.pointer.set(0, 0); motion.pointerActive = false }}>
     <a href="#projects" className="skip-link">跳到工具入口</a>
     <div className="cosmic-scene" aria-hidden="true">
       {supported === true && <SceneBoundary onError={lost}><Suspense fallback={null}><NeuralScene motion={motion} mobile={mobile} coreAnchor={coreAnchor} onReady={ready} onLost={lost} /></Suspense></SceneBoundary>}

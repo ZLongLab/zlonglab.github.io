@@ -50,6 +50,16 @@ try {
   assert.notEqual(await canvas.getAttribute('data-core-pulse'), pulseA, 'Energy core must visibly breathe over time')
   checks.push('Particles/data streams animate and neural connections change')
 
+  await page.mouse.move(280, 270)
+  await page.mouse.move(570, 320, { steps: 18 })
+  assert.ok(Number(await canvas.getAttribute('data-trail-particles')) > 5, 'Mouse movement emits a luminous trail')
+  await page.screenshot({ path: 'qa/pointer-trail.png' })
+  await page.waitForFunction(() => document.querySelector('canvas')?.dataset.trailParticles === '0', { timeout: 10000 })
+  await page.locator('main').dispatchEvent('pointermove', { pointerType: 'touch', clientX: 320, clientY: 250 })
+  await page.waitForTimeout(100)
+  assert.equal(await canvas.getAttribute('data-trail-particles'), '0', 'Touch does not emit a mouse trail')
+  checks.push('Mouse trail appears, fades after movement stops and ignores touch input')
+
   await page.mouse.move(100, 400)
   await page.waitForTimeout(1300)
   const cameraA = Number(await canvas.getAttribute('data-camera-x'))

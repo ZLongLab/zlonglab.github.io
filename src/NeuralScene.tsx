@@ -4,7 +4,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Bloom, EffectComposer } from '@react-three/postprocessing'
 import * as THREE from 'three'
 
-export type SceneMotion = { time: number; pointer: THREE.Vector2; running: boolean; visible: boolean; variant: 'core' | 'flow' | 'orbit'; speed: number; bloom: number }
+export type SceneMotion = { time: number; pointer: THREE.Vector2; pointerActive: boolean; pointerRevision: number; running: boolean; visible: boolean; variant: 'core' | 'flow' | 'orbit'; speed: number; bloom: number }
 
 // Seeded randomness keeps geometry stable through React remounts.
 function random(seed: number) {
@@ -451,6 +451,83 @@ function SpaceVeil({ motion }: { motion: SceneMotion }) {
   </mesh>
 }
 
+const trailVertex = `
+uniform float uTime;
+uniform float uDpr;
+uniform vec2 uResolution;
+attribute float aBirth;
+attribute float aSeed;
+varying float vLife;
+varying float vSeed;
+void main() {
+  float age = max(0.0, uTime - aBirth);
+  vLife = max(0.0, 1.0 - age / 1.15);
+  vSeed = aSeed;
+  vec2 drift = vec2(sin(aSeed * 39.0), cos(aSeed * 27.0)) * age * 22.0;
+  gl_Position = vec4(position.xy + drift / uResolution * 2.0, 0.0, 1.0);
+  gl_PointSize = (12.0 + aSeed * 16.0) * uDpr * (0.3 + 0.7 * vLife);
+}`
+const trailFragment = `
+varying float vLife;
+varying float vSeed;
+void main() {
+  if (vLife <= 0.0) discard;
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  if (d > 1.0) discard;
+  vec3 tint = mix(vec3(0.05, 1.4, 1.8), vec3(0.7, 0.25, 1.8), vSeed);
+  float glow = exp(-d*d*9.0) * 0.42 + exp(-d*d*65.0) * 0.75;
+  gl_FragColor = vec4(tint, glow * vLife * vLife);
+}`
+
+function PointerTrail({ motion }: { motion: SceneMotion }) {
+  const points = useRef<THREE.Points>(null!)
+  const last = useRef(new THREE.Vector2())
+  const connected = useRef(false)
+  const revision = useRef(-1)
+  const cursor = useRef(0)
+  const lastSize = useRef('')
+  const data = useMemo(() => ({ position: new Float32Array(128 * 3), birth: new Float32Array(128).fill(-100), seed: Float32Array.from({ length: 128 }, (_, i) => (i * 0.61803398875) % 1) }), [])
+  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uDpr: { value: 1 }, uResolution: { value: new THREE.Vector2(1, 1) } }), [])
+  useFrame(({ size, gl }) => {
+    uniforms.uTime.value = motion.time
+    uniforms.uDpr.value = gl.getPixelRatio()
+    uniforms.uResolution.value.set(size.width, size.height)
+    const sizeKey = `${size.width}/${size.height}`
+    if (lastSize.current !== sizeKey) {
+      data.birth.fill(-100)
+      points.current.geometry.attributes.aBirth.needsUpdate = true
+      lastSize.current = sizeKey
+      connected.current = false
+    }
+    if (!motion.pointerActive) connected.current = false
+    if (motion.running && motion.visible && motion.pointerActive && revision.current !== motion.pointerRevision) {
+      const distance = connected.current ? Math.hypot((motion.pointer.x-last.current.x)*size.width/2, (motion.pointer.y-last.current.y)*size.height/2) : 0
+      const count = Math.min(24, Math.max(1, Math.ceil(distance / 6)))
+      if (!connected.current) last.current.copy(motion.pointer)
+      for (let i = 1; i <= count; i++) {
+        const index = cursor.current++ % 128
+        data.position[index*3] = THREE.MathUtils.lerp(last.current.x, motion.pointer.x, i/count)
+        data.position[index*3+1] = THREE.MathUtils.lerp(last.current.y, motion.pointer.y, i/count)
+        data.birth[index] = motion.time
+      }
+      points.current.geometry.attributes.position.needsUpdate = true
+      points.current.geometry.attributes.aBirth.needsUpdate = true
+      last.current.copy(motion.pointer)
+      revision.current = motion.pointerRevision
+      connected.current = true
+    }
+    gl.domElement.dataset.trailParticles = String(data.birth.reduce((count, birth) => count + (motion.time-birth < 1.15 ? 1 : 0), 0))
+  })
+  return <points ref={points} frustumCulled={false} renderOrder={20}>
+    <bufferGeometry>
+      <bufferAttribute attach="attributes-position" args={[data.position, 3]} usage={THREE.DynamicDrawUsage} />
+      <bufferAttribute attach="attributes-aBirth" args={[data.birth, 1]} usage={THREE.DynamicDrawUsage} />
+      <bufferAttribute attach="attributes-aSeed" args={[data.seed, 1]} />
+    </bufferGeometry>
+    <shaderMaterial uniforms={uniforms} vertexShader={trailVertex} fragmentShader={trailFragment} transparent depthTest={false} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
+  </points>
+}
+
 type SceneProps = { motion: SceneMotion; mobile: boolean; coreAnchor: RefObject<HTMLDivElement | null>; onReady: () => void; onLost: () => void }
 
 function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
@@ -527,6 +604,7 @@ function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
       <Orbit radius={1.15} tilt={[1.2, -0.4, 0.3]} speed={-0.48} purple motion={motion} />
     </group>
     <PointField foreground motion={motion} mobile={mobile} />
+    <PointerTrail motion={motion} />
     <EffectComposer multisampling={0} resolutionScale={mobile ? 0.55 : 0.8}>
       <Bloom intensity={motion.bloom} luminanceThreshold={0.65} luminanceSmoothing={0.3} mipmapBlur radius={0.72} />
     </EffectComposer>
