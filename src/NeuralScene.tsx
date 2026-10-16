@@ -452,7 +452,7 @@ function SpaceVeil({ motion }: { motion: SceneMotion }) {
 }
 
 const TRAIL_LIFETIME = 0.3
-const TRAIL_LENGTH = 64
+const TRAIL_LENGTH = 110
 const trailVertex = `
 uniform float uTime;
 uniform float uDpr;
@@ -464,7 +464,7 @@ varying float vTaper;
 void main() {
   float age = max(0.0, uTime - aBirth);
   vLife = max(0.0, 1.0 - age / 0.3);
-  vTaper = clamp(1.0 - (uHeadDistance - aDistance) / 64.0, 0.0, 1.0);
+  vTaper = clamp(1.0 - (uHeadDistance - aDistance) / 110.0, 0.0, 1.0);
   gl_Position = vec4(position.xy, 0.0, 1.0);
   gl_PointSize = max(1.0, (1.5 + 20.0 * pow(vTaper, 1.4)) * uDpr * vLife);
 }`
