@@ -13,13 +13,32 @@ try {
   await page.goto(process.env.SITE_URL || 'http://127.0.0.1:5173', { waitUntil: 'networkidle' })
   await page.locator('main[data-render-mode="webgl"]').waitFor()
   const canvas = page.locator('.cosmic-scene canvas')
+  const checkLogo = async () => {
+    const alignment = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas')
+      const canvasBox = canvas.getBoundingClientRect()
+      const mark = document.querySelector('.core-mark')
+      const box = mark.getBoundingClientRect()
+      const letters = [...mark.querySelectorAll('path')].map(p => p.getBBox())
+      return {
+        x: Math.abs(box.x + box.width / 2 - canvasBox.x - Number(canvas.dataset.coreX)),
+        y: Math.abs(box.y + box.height / 2 - canvasBox.y - Number(canvas.dataset.coreY)),
+        sameWidth: letters[0].width === letters[1].width,
+        sameHeight: letters[0].height === letters[1].height,
+      }
+    })
+    assert.ok(alignment.x < 1 && alignment.y < 1, 'Logo must track projected sphere center')
+    assert.ok(alignment.sameWidth && alignment.sameHeight, 'Z and L must share width and height')
+  }
   await page.waitForTimeout(3500)
   assert.equal(await page.locator('h1').innerText(), 'ZL AI LAB')
   assert.equal(await page.locator('.hero-tagline').innerText(), 'Building digital tools and intelligent experiences.')
   assert.equal(await page.getByText(/Vessel AI|Cloud Lab|AI Desktop Assistant/).count(), 0)
   assert.equal(await canvas.getAttribute('data-bloom'), 'mipmap-hdr')
   assert.ok(Number(await canvas.getAttribute('data-link-count')) > 20)
-  checks.push('WebGL scene, HDR Bloom and neural links initialized')
+  assert.equal(await canvas.getAttribute('data-atmosphere'), 'aurora-horizon')
+  await checkLogo()
+  checks.push('WebGL scene, HDR Bloom, neural links and animated aurora/horizon initialized')
 
   const animatedA = await canvas.screenshot()
   const pulseA = await canvas.getAttribute('data-core-pulse')
@@ -38,7 +57,8 @@ try {
   await page.waitForTimeout(1600)
   const cameraB = Number(await canvas.getAttribute('data-camera-x'))
   assert.ok(cameraB - cameraA > 0.08, 'Pointer movement must affect camera parallax')
-  checks.push('Smooth camera parallax responds to pointer')
+  await checkLogo()
+  checks.push('Smooth camera parallax responds to pointer; equal-sized logo tracks sphere center')
 
   await page.getByRole('button', { name: '暂停场景动画' }).click()
   await page.mouse.move(1000, 500)
@@ -79,6 +99,7 @@ try {
     const footer = await page.locator('footer').boundingBox()
     assert.ok(heading && portals && footer && heading.y + heading.height < portals.y && portals.y + portals.height < footer.y, `Overlapping UI at ${width}px`)
     assert.equal(await page.locator('main').getAttribute('data-render-mode'), 'webgl')
+    await checkLogo()
   }
   checks.push('Responsive layout at 1920/1440/1024/768/390/320px, no horizontal overflow or UI overlap')
 

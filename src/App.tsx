@@ -7,8 +7,9 @@ import { profile } from './content'
 
 const NeuralScene = lazy(() => import('./NeuralScene'))
 function Mark() {
-  return <svg className="core-mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-    <path d="M12 15h29L15 46h29M46 15v31h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square" />
+  return <svg className="core-mark" viewBox="0 0 100 64" fill="none" aria-hidden="true">
+    <path d="M12 12h30L12 52h30" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="miter" />
+    <path d="M58 12v40h30" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="miter" />
   </svg>
 }
 class SceneBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
@@ -24,6 +25,7 @@ export default function App() {
   const [visible, setVisible] = useState(!document.hidden)
   const [status, setStatus] = useState<'loading' | 'webgl' | 'fallback'>('loading')
   const [supported, setSupported] = useState<boolean | null>(null)
+  const coreAnchor = useRef<HTMLDivElement>(null)
   const motion = useRef<SceneMotion>({ time: 0.6, pointer: new Vector2(), running: true, visible: true, variant: 'core', speed: 1, bloom: 1.6 }).current
   motion.running = !paused && !reduced
   motion.visible = visible
@@ -53,14 +55,14 @@ export default function App() {
   return <main id="home" className="universe" data-render-mode={status} onPointerMove={move} onPointerLeave={() => motion.pointer.set(0, 0)}>
     <a href="#projects" className="skip-link">跳到工具入口</a>
     <div className="cosmic-scene" aria-hidden="true">
-      {supported === true && <SceneBoundary onError={lost}><Suspense fallback={null}><NeuralScene motion={motion} mobile={mobile} onReady={ready} onLost={lost} /></Suspense></SceneBoundary>}
+      {supported === true && <SceneBoundary onError={lost}><Suspense fallback={null}><NeuralScene motion={motion} mobile={mobile} coreAnchor={coreAnchor} onReady={ready} onLost={lost} /></Suspense></SceneBoundary>}
       {supported !== true && <div className="scene-fallback" />}
     </div>
     <div className="atmosphere" aria-hidden="true" /><div className="grain" aria-hidden="true" />
     <header className="lab-header">
       <a href={profile.github} target="_blank" rel="noopener noreferrer" className="github-link" aria-label="访问 ZLongLab GitHub 主页"><Github size={16} /><span>GitHub</span><ArrowUpRight size={13} /></a>
     </header>
-    <div className="core-identity" aria-hidden="true"><Mark /></div>
+    <div ref={coreAnchor} className="core-identity" aria-hidden="true"><Mark /></div>
     <div className="lab-content">
       <h1>ZL AI <span>LAB</span></h1>
       <p className="hero-tagline">Building digital tools and intelligent experiences.</p>

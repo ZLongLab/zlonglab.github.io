@@ -17,7 +17,8 @@ a:focus-visible, button:focus-visible, nav:focus-visible { outline: 2px solid va
 .github-link { display: inline-flex; gap: 9px; align-items: center; min-height: 44px; color: #a8c2d7; font-size: 12px; transition: color .3s; }
 .github-link:hover { color: var(--cyan); }
 .core-identity { position: absolute; top: 43%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; animation: core-enter 2.6s both; }
-.core-mark { display: block; width: 90px; height: 90px; color: #d5fdff; filter: drop-shadow(0 0 14px #00f5ffb3); }
+.core-mark { display: block; width: 100px; height: 64px; color: #e3fcff; filter: drop-shadow(0 0 12px #00f5ff99); }
+.universe[data-render-mode="fallback"] .core-identity { top: 43% !important; left: 50% !important; }
 .lab-content { position: absolute; top: 69%; left: 6%; right: 6%; text-align: center; animation: content-enter 2s .2s both; }
 h1 { font-size: clamp(38px, 4vw, 62px); line-height: 1.13; font-weight: 350; letter-spacing: -.045em; margin: 0; text-shadow: 0 4px 30px #020617; }
 h1 span { background: linear-gradient(115deg, #c2f6ff, #67d7ff 40%, #a398ff); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
@@ -44,7 +45,7 @@ h1 span { background: linear-gradient(115deg, #c2f6ff, #67d7ff 40%, #a398ff); -w
   .universe { min-height: 680px; }
   .lab-header { padding: 20px 7%; }
   .core-identity { top: 41%; }
-  .core-mark { width: 74px; height: 74px; }
+  .core-mark { width: 80px; height: 51.2px; }
   .lab-content { top: 67%; }
   h1 { font-size: clamp(34px, 7.2vw, 48px); }
   .hero-tagline { font-size: 11px; max-width: 275px; margin: 12px auto 0; }

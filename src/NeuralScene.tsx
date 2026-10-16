@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
+import type { RefObject } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Bloom, EffectComposer } from '@react-three/postprocessing'
 import * as THREE from 'three'
@@ -391,11 +392,73 @@ function Halo({ position, color, scale, motion }: { position: [number, number, n
   </mesh>
 }
 
-function Space({ motion, mobile, onReady, onLost }: { motion: SceneMotion; mobile: boolean; onReady: () => void; onLost: () => void }) {
+const spaceVeilVertex = `
+varying vec2 vUv;
+void main() { vUv = uv; gl_Position = vec4(position.xy, 0.999, 1.0); }
+`
+const spaceVeilFragment = `
+varying vec2 vUv;
+uniform float uTime;
+uniform float uAspect;
+float glow(float distance, float width) { return exp(-pow(distance / width, 2.0)); }
+void main() {
+  vec2 uv = vUv;
+  float x = uv.x - 0.5;
+  vec3 cyan = vec3(0.0, 0.72, 0.85);
+  vec3 violet = vec3(0.32, 0.14, 0.76);
+  vec3 color = vec3(0.0);
+  float edgeFade = smoothstep(0.0, 0.12, uv.x) * smoothstep(0.0, 0.12, 1.0-uv.x);
+  // Wide luminous ribbons above the core, with light travelling along each contour.
+  for (int i = 0; i < 3; i++) {
+    float fi = float(i);
+    float crest = 0.91 + fi * 0.021 + 0.023 * sin(x * 7.0 + uTime * 0.11 + fi * 0.6);
+    float d = uv.y - crest;
+    float envelope = exp(-x*x*4.0);
+    float packet = pow(0.5 + 0.5 * sin(x * 5.0 - uTime * 0.32 + fi * 2.0), 16.0);
+    vec3 tint = mix(violet, cyan, 0.5 + 0.5 * sin(x*3.0 + fi));
+    color += tint * envelope * (glow(d, 0.0011) * (0.14 + packet * 0.65) + glow(d, 0.018) * 0.06);
+  }
+  // Low orbital horizon: a sparse curved grid and circulating light below the entrance.
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    float arc = 0.045 + fi * 0.013 - x*x * (0.24 + fi * 0.035);
+    float d = uv.y - arc;
+    float packet = pow(0.5 + 0.5 * cos(x * 9.0 + uTime * 0.4 - fi), 24.0);
+    color += mix(violet, cyan, fi / 4.0) * (glow(d, 0.0008) * (0.12 + packet * 0.5) + glow(d, 0.009) * 0.055);
+  }
+  float horizonFog = glow(uv.y - 0.07, 0.05) * exp(-x*x*7.0);
+  color += mix(violet, cyan, uv.x) * horizonFog * 0.065;
+  // Sparse drifting light specks confined to the upper and lower atmosphere.
+  vec2 grid = vec2(uv.x * max(uAspect, 0.75), uv.y + uTime * 0.003) * 90.0;
+  vec2 cell = floor(grid);
+  float seed = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+  float dust = glow(length(fract(grid)-0.5), 0.085) * step(0.91, seed);
+  float region = smoothstep(0.76, 0.94, uv.y) + (1.0-smoothstep(0.07,0.18,uv.y));
+  color += mix(violet, cyan, seed) * dust * region * (0.6 + 0.4*sin(uTime+seed*30.0));
+  gl_FragColor = vec4(color * edgeFade, 1.0);
+}`
+
+function SpaceVeil({ motion }: { motion: SceneMotion }) {
+  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uAspect: { value: 1 } }), [])
+  useFrame(({ size, gl }) => {
+    uniforms.uTime.value = motion.time
+    uniforms.uAspect.value = size.width / size.height
+    gl.domElement.dataset.atmosphere = 'aurora-horizon'
+  })
+  return <mesh frustumCulled={false} renderOrder={-10}>
+    <planeGeometry args={[2, 2]} />
+    <shaderMaterial vertexShader={spaceVeilVertex} fragmentShader={spaceVeilFragment} uniforms={uniforms} transparent depthTest={false} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
+  </mesh>
+}
+
+type SceneProps = { motion: SceneMotion; mobile: boolean; coreAnchor: RefObject<HTMLDivElement | null>; onReady: () => void; onLost: () => void }
+
+function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
   const { gl, camera, size, invalidate } = useThree()
   const initialized = useRef(false)
   const frames = useRef(0)
   const lastSize = useRef('')
+  const projectedCore = useMemo(() => new THREE.Vector3(), [])
   useEffect(() => {
     const canvas = gl.domElement
     canvas.dataset.bloom = 'mipmap-hdr'
@@ -426,6 +489,17 @@ function Space({ motion, mobile, onReady, onLost }: { motion: SceneMotion; mobil
       camera.position.z = THREE.MathUtils.lerp(camera.position.z, Math.cos(azimuth) * distance, interpolate ? 0.035 : 1)
       camera.lookAt(0, -0.52, 0)
     }
+    // Project the actual sphere origin after camera motion; never approximate it with viewport percentages.
+    camera.updateMatrixWorld()
+    projectedCore.set(0, 0.15, 0).project(camera)
+    const coreX = (projectedCore.x * 0.5 + 0.5) * size.width
+    const coreY = (-projectedCore.y * 0.5 + 0.5) * size.height
+    if (coreAnchor.current) {
+      coreAnchor.current.style.left = `${coreX}px`
+      coreAnchor.current.style.top = `${coreY}px`
+    }
+    gl.domElement.dataset.coreX = coreX.toFixed(2)
+    gl.domElement.dataset.coreY = coreY.toFixed(2)
     frames.current++
     if (frames.current % 30 === 0 || !motion.running) {
       gl.domElement.dataset.cameraX = camera.position.x.toFixed(4)
@@ -438,6 +512,7 @@ function Space({ motion, mobile, onReady, onLost }: { motion: SceneMotion; mobil
   }, -100)
   return <>
     <color attach="background" args={['#020617']} />
+    <SpaceVeil motion={motion} />
     <PointField foreground={false} motion={motion} mobile={mobile} />
     <PointField foreground={false} middle motion={motion} mobile={mobile} />
     <Halo position={[-1.2, 0.15, -2.2]} color={violet} scale={8} motion={motion} />
@@ -458,8 +533,8 @@ function Space({ motion, mobile, onReady, onLost }: { motion: SceneMotion; mobil
   </>
 }
 
-export default function NeuralScene({ motion, mobile, onReady, onLost }: { motion: SceneMotion; mobile: boolean; onReady: () => void; onLost: () => void }) {
+export default function NeuralScene({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
   return <Canvas camera={{ position: [0, 0.4, mobile ? 13.4 : 8.7], fov: 42, near: 0.1, far: 90 }} dpr={[1, mobile ? 1.25 : 1.5]} gl={{ antialias: false, alpha: false, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping }} frameloop={motion.running && motion.visible ? 'always' : 'demand'} fallback={<div className="scene-fallback" aria-hidden="true" />}>
-    <Space motion={motion} mobile={mobile} onReady={onReady} onLost={onLost} />
+    <Space motion={motion} mobile={mobile} coreAnchor={coreAnchor} onReady={onReady} onLost={onLost} />
   </Canvas>
 }
