@@ -451,32 +451,33 @@ function SpaceVeil({ motion }: { motion: SceneMotion }) {
   </mesh>
 }
 
+const TRAIL_LIFETIME = 0.3
+const TRAIL_LENGTH = 64
 const trailVertex = `
 uniform float uTime;
 uniform float uDpr;
-uniform vec2 uResolution;
+uniform float uHeadDistance;
 attribute float aBirth;
-attribute float aSeed;
+attribute float aDistance;
 varying float vLife;
-varying float vSeed;
+varying float vTaper;
 void main() {
   float age = max(0.0, uTime - aBirth);
-  vLife = max(0.0, 1.0 - age / 1.15);
-  vSeed = aSeed;
-  vec2 drift = vec2(sin(aSeed * 39.0), cos(aSeed * 27.0)) * age * 22.0;
-  gl_Position = vec4(position.xy + drift / uResolution * 2.0, 0.0, 1.0);
-  gl_PointSize = (12.0 + aSeed * 16.0) * uDpr * (0.3 + 0.7 * vLife);
+  vLife = max(0.0, 1.0 - age / 0.3);
+  vTaper = clamp(1.0 - (uHeadDistance - aDistance) / 64.0, 0.0, 1.0);
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+  gl_PointSize = max(1.0, (1.5 + 20.0 * pow(vTaper, 1.4)) * uDpr * vLife);
 }`
 const trailFragment = `
 varying float vLife;
-varying float vSeed;
+varying float vTaper;
 void main() {
-  if (vLife <= 0.0) discard;
+  if (vLife <= 0.0 || vTaper <= 0.0) discard;
   float d = length(gl_PointCoord - 0.5) * 2.0;
   if (d > 1.0) discard;
-  vec3 tint = mix(vec3(0.05, 1.4, 1.8), vec3(0.7, 0.25, 1.8), vSeed);
-  float glow = exp(-d*d*9.0) * 0.42 + exp(-d*d*65.0) * 0.75;
-  gl_FragColor = vec4(tint, glow * vLife * vLife);
+  vec3 tint = mix(vec3(0.55, 0.22, 1.2), vec3(0.1, 1.25, 1.5), vTaper);
+  float glow = exp(-d*d*8.0) * 0.35 + exp(-d*d*48.0) * 0.5;
+  gl_FragColor = vec4(tint, glow * vLife * vLife * vTaper);
 }`
 
 function PointerTrail({ motion }: { motion: SceneMotion }) {
@@ -485,44 +486,70 @@ function PointerTrail({ motion }: { motion: SceneMotion }) {
   const connected = useRef(false)
   const revision = useRef(-1)
   const cursor = useRef(0)
+  const headDistance = useRef(0)
   const lastSize = useRef('')
-  const data = useMemo(() => ({ position: new Float32Array(128 * 3), birth: new Float32Array(128).fill(-100), seed: Float32Array.from({ length: 128 }, (_, i) => (i * 0.61803398875) % 1) }), [])
-  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uDpr: { value: 1 }, uResolution: { value: new THREE.Vector2(1, 1) } }), [])
+  const data = useMemo(() => ({ position: new Float32Array(64 * 3), birth: new Float32Array(64).fill(-100), distance: new Float32Array(64) }), [])
+  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uDpr: { value: 1 }, uHeadDistance: { value: 0 } }), [])
   useFrame(({ size, gl }) => {
-    uniforms.uTime.value = motion.time
+    // Pointer feedback uses wall time, independent of the scene speed and animation clock.
+    const now = performance.now() / 1000
+    uniforms.uTime.value = now
     uniforms.uDpr.value = gl.getPixelRatio()
-    uniforms.uResolution.value.set(size.width, size.height)
     const sizeKey = `${size.width}/${size.height}`
-    if (lastSize.current !== sizeKey) {
+    const enabled = motion.running && motion.visible && motion.pointerActive
+    if (lastSize.current !== sizeKey || !enabled) {
       data.birth.fill(-100)
       points.current.geometry.attributes.aBirth.needsUpdate = true
       lastSize.current = sizeKey
       connected.current = false
+      if (!enabled) revision.current = motion.pointerRevision
     }
-    if (!motion.pointerActive) connected.current = false
-    if (motion.running && motion.visible && motion.pointerActive && revision.current !== motion.pointerRevision) {
+    if (enabled && revision.current !== motion.pointerRevision) {
       const distance = connected.current ? Math.hypot((motion.pointer.x-last.current.x)*size.width/2, (motion.pointer.y-last.current.y)*size.height/2) : 0
-      const count = Math.min(24, Math.max(1, Math.ceil(distance / 6)))
       if (!connected.current) last.current.copy(motion.pointer)
-      for (let i = 1; i <= count; i++) {
-        const index = cursor.current++ % 128
-        data.position[index*3] = THREE.MathUtils.lerp(last.current.x, motion.pointer.x, i/count)
-        data.position[index*3+1] = THREE.MathUtils.lerp(last.current.y, motion.pointer.y, i/count)
-        data.birth[index] = motion.time
+      if (!connected.current || distance > 0.5) {
+        headDistance.current += distance
+        const segment = Math.min(distance, TRAIL_LENGTH)
+        const count = Math.max(1, Math.ceil(segment / 3))
+        for (let i = 1; i <= count; i++) {
+          const index = cursor.current++ % 64
+          const behind = segment * (1 - i/count)
+          const fraction = distance ? 1 - behind / distance : 1
+          data.position[index*3] = THREE.MathUtils.lerp(last.current.x, motion.pointer.x, fraction)
+          data.position[index*3+1] = THREE.MathUtils.lerp(last.current.y, motion.pointer.y, fraction)
+          data.birth[index] = now
+          data.distance[index] = headDistance.current - behind
+        }
+        points.current.geometry.attributes.position.needsUpdate = true
+        points.current.geometry.attributes.aBirth.needsUpdate = true
+        points.current.geometry.attributes.aDistance.needsUpdate = true
+        last.current.copy(motion.pointer)
       }
-      points.current.geometry.attributes.position.needsUpdate = true
-      points.current.geometry.attributes.aBirth.needsUpdate = true
-      last.current.copy(motion.pointer)
       revision.current = motion.pointerRevision
       connected.current = true
     }
-    gl.domElement.dataset.trailParticles = String(data.birth.reduce((count, birth) => count + (motion.time-birth < 1.15 ? 1 : 0), 0))
+    uniforms.uHeadDistance.value = headDistance.current
+    const actualUniforms = (points.current.material as THREE.ShaderMaterial).uniforms
+    actualUniforms.uTime.value = now
+    actualUniforms.uDpr.value = gl.getPixelRatio()
+    actualUniforms.uHeadDistance.value = headDistance.current
+    let active = 0
+    let length = 0
+    for (let i = 0; i < data.birth.length; i++) {
+      const behind = headDistance.current - data.distance[i]
+      if (now-data.birth[i] < TRAIL_LIFETIME && behind < TRAIL_LENGTH) {
+        active++
+        length = Math.max(length, behind)
+      }
+    }
+    gl.domElement.dataset.trailParticles = String(active)
+    gl.domElement.dataset.trailLength = length.toFixed(2)
   })
   return <points ref={points} frustumCulled={false} renderOrder={20}>
     <bufferGeometry>
       <bufferAttribute attach="attributes-position" args={[data.position, 3]} usage={THREE.DynamicDrawUsage} />
       <bufferAttribute attach="attributes-aBirth" args={[data.birth, 1]} usage={THREE.DynamicDrawUsage} />
-      <bufferAttribute attach="attributes-aSeed" args={[data.seed, 1]} />
+      <bufferAttribute attach="attributes-aDistance" args={[data.distance, 1]} usage={THREE.DynamicDrawUsage} />
     </bufferGeometry>
     <shaderMaterial uniforms={uniforms} vertexShader={trailVertex} fragmentShader={trailFragment} transparent depthTest={false} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
   </points>
