@@ -109,19 +109,44 @@ void main() {
   float angle = atan(vPosition.z, vPosition.x);
   float contour = pow(0.5 + 0.5 * sin(vPosition.y * 26.0 + angle * 3.0 - uTime * 2.5), 22.0);
   float flux = 0.85 + 0.35 * sin(vPosition.y * 8.0 + uTime * 1.4);
-  vec3 color = vec3(0.002, 0.005, 0.015) + tint * rim * 2.8 * flux;
-  color += tint * contour * (0.09 + rim * 0.5);
-  gl_FragColor = vec4(color, 0.72);
+  vec3 color = vec3(0.002, 0.005, 0.015) + tint * rim * 0.4 * flux;
+  color += tint * contour * (0.015 + rim * 0.12);
+  gl_FragColor = vec4(color, 0.18);
 }`
 
-function EnergyCore({ motion }: { motion: SceneMotion }) {
+const surfaceVertex = `
+uniform float uTime;
+uniform float uScale;
+attribute float aSize;
+attribute float aPhase;
+attribute vec3 aColor;
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+  float radius = length(position);
+  float latitude = asin(clamp(position.y / radius, -1.0, 1.0));
+  float longitude = atan(position.z, position.x) + uTime * (0.24 + 0.07 * sin(latitude * 4.0));
+  latitude += sin(longitude * 3.0 + uTime * 0.5) * 0.018;
+  longitude += latitude * 0.6 + sin(latitude * 12.0 + uTime * 0.4) * 0.055;
+  vec3 p = radius * vec3(cos(longitude)*cos(latitude), sin(latitude), sin(longitude)*cos(latitude));
+  vec4 view = modelViewMatrix * vec4(p, 1.0);
+  float scan = mod(uTime * 0.65, 4.8) - 2.4;
+  float sweep = exp(-pow((p.y - scan) / 0.13, 2.0));
+  float facing = 0.4 + 0.6 * max(0.0, dot(normalize(normalMatrix * p), normalize(-view.xyz)));
+  gl_Position = projectionMatrix * view;
+  gl_PointSize = clamp(aSize * uScale * (1.0 + sweep * 1.5) / max(1.0, -view.z), 1.0, 7.0);
+  vColor = mix(aColor, vec3(2.0, 3.0, 3.2), sweep * 0.85);
+  vAlpha = facing * (0.6 + 0.4 * sin(aPhase + uTime * 1.2)) + sweep * 0.6;
+}`
+
+function EnergyCore({ motion, mobile }: { motion: SceneMotion; mobile: boolean }) {
   const root = useRef<THREE.Group>(null!)
   const shader = useRef<THREE.ShaderMaterial>(null!)
   const cloud = useRef<THREE.Points>(null!)
   const cloudShader = useRef<THREE.ShaderMaterial>(null!)
   const data = useMemo(() => {
     const rand = random(119)
-    const count = 2400
+    const count = mobile ? 3200 : 6200
     const positions = new Float32Array(count * 3)
     const colors = new Float32Array(count * 3)
     const sizes = new Float32Array(count)
@@ -132,13 +157,13 @@ function EnergyCore({ motion }: { motion: SceneMotion }) {
       const theta = i * Math.PI * (3 - Math.sqrt(5))
       const shell = 1.6 + rand() * 0.11
       positions.set([Math.cos(theta) * r * shell, z * shell, Math.sin(theta) * r * shell], i * 3)
-      const color = violet.clone().lerp(cyan, (Math.cos(theta) * r + 1) * 0.5).multiplyScalar(1.2 + rand() * 1.8)
+      const color = new THREE.Color('#209bff').lerp(cyan, rand() * 0.9).multiplyScalar(1.2 + rand() * 1.4)
       colors.set(color.toArray(), i * 3)
-      sizes[i] = 0.018 + rand() * 0.032
+      sizes[i] = 0.014 + rand() * 0.022
       phases[i] = rand() * 6.28
     }
     return { positions, colors, sizes, phases }
-  }, [])
+  }, [mobile])
   const uniforms = useMemo(() => ({ uTime: { value: 0 } }), [])
   const cloudUniforms = useMemo(() => ({ uTime: { value: 0 }, uScale: { value: 550 } }), [])
   useFrame(() => {
@@ -162,69 +187,9 @@ function EnergyCore({ motion }: { motion: SceneMotion }) {
         <bufferAttribute attach="attributes-aSize" args={[data.sizes, 1]} />
         <bufferAttribute attach="attributes-aPhase" args={[data.phases, 1]} />
       </bufferGeometry>
-      <shaderMaterial ref={cloudShader} uniforms={cloudUniforms} vertexShader={pointVertex} fragmentShader={pointFragment} transparent depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
+      <shaderMaterial ref={cloudShader} uniforms={cloudUniforms} vertexShader={surfaceVertex} fragmentShader={pointFragment} transparent depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
     </points>
   </group>
-}
-
-const flowVertex = `
-uniform float uTime;
-uniform float uFlow;
-attribute float aSize;
-attribute float aPhase;
-attribute vec3 aColor;
-varying vec3 vColor;
-varying float vAlpha;
-void main() {
-  vec3 p = position;
-  float angle = atan(p.z, p.x) + uTime * uFlow * (0.3 + aPhase * 0.075);
-  float radius = length(p.xz) * (0.86 + 0.14 * sin(uTime * 0.9 + aPhase));
-  p.x = cos(angle) * radius;
-  p.z = sin(angle) * radius;
-  p.y += sin(uTime * 0.85 + aPhase) * 0.13;
-  vec4 view = modelViewMatrix * vec4(p, 1.0);
-  gl_Position = projectionMatrix * view;
-  gl_PointSize = clamp(aSize * 510.0 / max(1.0, -view.z), 1.0, 8.0);
-  vColor = aColor * (0.8 + 0.35 * sin(uTime * 1.1 + aPhase));
-  vAlpha = 0.5 + 0.25 * sin(uTime * 0.8 + aPhase);
-}`
-function InternalFlow({ motion, mobile }: { motion: SceneMotion; mobile: boolean }) {
-  const shader = useRef<THREE.ShaderMaterial>(null!)
-  const root = useRef<THREE.Points>(null!)
-  const data = useMemo(() => {
-    const rand = random(455)
-    const count = mobile ? 1500 : 2800
-    const position = new Float32Array(count * 3)
-    const color = new Float32Array(count * 3)
-    const phase = new Float32Array(count)
-    const size = new Float32Array(count)
-    for (let i = 0; i < count; i++) {
-      const y = (rand() - 0.5) * 2.5
-      const ring = Math.sqrt(Math.max(0, 1.6 - y * y)) * (0.42 + rand() * 0.55)
-      const angle = y * 5 + (i % 6) * Math.PI / 3 + rand() * 0.18
-      position.set([Math.cos(angle) * ring, y, Math.sin(angle) * ring], i * 3)
-      color.set(cyan.clone().lerp(violet, i % 3 === 0 ? 0.9 : 0.15).multiplyScalar(1.3 + rand()).toArray(), i * 3)
-      phase[i] = rand() * 6.28
-      size[i] = 0.009 + rand() * 0.026
-    }
-    return { position, color, phase, size }
-  }, [mobile])
-  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uFlow: { value: 1 } }), [])
-  useFrame(() => {
-    shader.current.uniforms.uTime.value = motion.time
-    shader.current.uniforms.uFlow.value = motion.variant === 'flow' ? 2 : 1
-    root.current.rotation.z = Math.sin(motion.time * 0.2) * 0.2
-    root.current.rotation.x = motion.time * 0.07
-  })
-  return <points ref={root} renderOrder={3} frustumCulled={false}>
-    <bufferGeometry>
-      <bufferAttribute attach="attributes-position" args={[data.position, 3]} />
-      <bufferAttribute attach="attributes-aColor" args={[data.color, 3]} />
-      <bufferAttribute attach="attributes-aPhase" args={[data.phase, 1]} />
-      <bufferAttribute attach="attributes-aSize" args={[data.size, 1]} />
-    </bufferGeometry>
-    <shaderMaterial ref={shader} vertexShader={flowVertex} fragmentShader={pointFragment} uniforms={uniforms} transparent depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-  </points>
 }
 
 function NeuralLinks({ motion, mobile }: { motion: SceneMotion; mobile: boolean }) {
@@ -292,7 +257,7 @@ function NeuralLinks({ motion, mobile }: { motion: SceneMotion; mobile: boolean 
     links.current.forEach(([a, b], i) => {
       data.linePosition.set(data.position.subarray(a * 3, a * 3 + 3), i * 6)
       data.linePosition.set(data.position.subarray(b * 3, b * 3 + 3), i * 6 + 3)
-      const strength = (0.06 + (Math.sin(time * 1.2 + i * 0.67) + 1) * 0.07) * (0.15 + 0.85 * fade) * (motion.variant === 'flow' ? 0.45 : 1)
+      const strength = (0.015 + (Math.sin(time * 1.2 + i * 0.67) + 1) * 0.018) * (0.15 + 0.85 * fade) * (motion.variant === 'flow' ? 0.45 : 1)
       for (let k = 0; k < 3; k++) {
         data.lineColor[i * 6 + k] = data.nodeColor[a * 3 + k] * strength
         data.lineColor[i * 6 + k + 3] = data.nodeColor[b * 3 + k] * strength
@@ -347,6 +312,17 @@ function NeuralLinks({ motion, mobile }: { motion: SceneMotion; mobile: boolean 
 function Orbit({ radius, tilt, speed, purple, motion }: { radius: number; tilt: [number, number, number]; speed: number; purple?: boolean; motion: SceneMotion }) {
   const ring = useRef<THREE.Group>(null!)
   const tracer = useRef<THREE.Mesh>(null!)
+  const trail = useRef<THREE.LineSegments>(null!)
+  const trailData = useMemo(() => {
+    const colors = new Float32Array(40 * 6)
+    const tint = (purple ? violet : cyan).clone().multiplyScalar(2)
+    for (let i = 0; i < 40; i++) {
+      const fade = Math.pow(1-i/40, 2)
+      colors.set(tint.clone().multiplyScalar(fade).toArray(), i*6)
+      colors.set(tint.clone().multiplyScalar(fade).toArray(), i*6+3)
+    }
+    return { positions: new Float32Array(40*6), colors }
+  }, [purple])
   const positions = useMemo(() => new Float32Array(Array.from({ length: 161 }, (_, i) => {
     const angle = i / 160 * Math.PI * 2
     return [Math.cos(angle) * radius, Math.sin(angle) * radius, 0]
@@ -355,14 +331,26 @@ function Orbit({ radius, tilt, speed, purple, motion }: { radius: number; tilt: 
     const orbitalSpeed = speed * (motion.variant === 'orbit' ? 2.7 : 1.8)
     ring.current.rotation.z = tilt[2] + motion.time * orbitalSpeed * 0.25
     ring.current.rotation.x = tilt[0] + Math.sin(motion.time * 0.18 + radius) * 0.13
+    ring.current.rotation.y = tilt[1] + Math.sin(motion.time * 0.11 + radius) * 0.18
     const angle = motion.time * orbitalSpeed
     tracer.current.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, 0)
+    tracer.current.scale.setScalar(1 + Math.sin(motion.time*2.4+radius)*0.2)
+    for (let i=0; i<40; i++) {
+      const a = angle - Math.sign(speed)*i*.018
+      const b = angle - Math.sign(speed)*(i+1)*.018
+      trailData.positions.set([Math.cos(a)*radius,Math.sin(a)*radius,0,Math.cos(b)*radius,Math.sin(b)*radius,0],i*6)
+    }
+    trail.current.geometry.attributes.position.needsUpdate = true
   })
   return <group ref={ring} rotation={tilt}>
     <lineLoop>
       <bufferGeometry><bufferAttribute attach="attributes-position" args={[positions, 3]} /></bufferGeometry>
-      <lineBasicMaterial color={purple ? '#7B61FF' : '#00F5FF'} transparent opacity={0.27} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      <lineBasicMaterial color={purple ? '#7B61FF' : '#00F5FF'} transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
     </lineLoop>
+    <lineSegments ref={trail}>
+      <bufferGeometry><bufferAttribute attach="attributes-position" args={[trailData.positions,3]} usage={THREE.DynamicDrawUsage} /><bufferAttribute attach="attributes-color" args={[trailData.colors,3]} /></bufferGeometry>
+      <lineBasicMaterial vertexColors transparent opacity={.75} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+    </lineSegments>
     <mesh ref={tracer}><sphereGeometry args={[0.027, 8, 8]} /><meshBasicMaterial color={purple ? [1.6, 0.5, 4] : [0.2, 3.5, 4]} toneMapped={false} /></mesh>
   </group>
 }
@@ -383,71 +371,12 @@ function Halo({ position, color, scale, motion }: { position: [number, number, n
   const uniforms = useMemo(() => ({ uColor: { value: color }, uTime: { value: 0 } }), [color])
   useFrame(({ camera }) => {
     ref.current.quaternion.copy(camera.quaternion)
-    uniforms.uTime.value = motion.time
+    ;(ref.current.material as THREE.ShaderMaterial).uniforms.uTime.value = motion.time
     ref.current.scale.setScalar(scale * (1 + Math.sin(motion.time * 0.55 + position[0]) * 0.1))
   })
   return <mesh ref={ref} position={position} scale={scale} renderOrder={-2}>
     <planeGeometry args={[1, 1]} />
     <shaderMaterial vertexShader={haloVertex} fragmentShader={haloFragment} uniforms={uniforms} transparent depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-  </mesh>
-}
-
-const spaceVeilVertex = `
-varying vec2 vUv;
-void main() { vUv = uv; gl_Position = vec4(position.xy, 0.999, 1.0); }
-`
-const spaceVeilFragment = `
-varying vec2 vUv;
-uniform float uTime;
-uniform float uAspect;
-float glow(float distance, float width) { return exp(-pow(distance / width, 2.0)); }
-void main() {
-  vec2 uv = vUv;
-  float x = uv.x - 0.5;
-  vec3 cyan = vec3(0.0, 0.72, 0.85);
-  vec3 violet = vec3(0.32, 0.14, 0.76);
-  vec3 color = vec3(0.0);
-  float edgeFade = smoothstep(0.0, 0.12, uv.x) * smoothstep(0.0, 0.12, 1.0-uv.x);
-  // Wide luminous ribbons above the core, with light travelling along each contour.
-  for (int i = 0; i < 3; i++) {
-    float fi = float(i);
-    float crest = 0.91 + fi * 0.021 + 0.023 * sin(x * 7.0 + uTime * 0.11 + fi * 0.6);
-    float d = uv.y - crest;
-    float envelope = exp(-x*x*4.0);
-    float packet = pow(0.5 + 0.5 * sin(x * 5.0 - uTime * 0.32 + fi * 2.0), 16.0);
-    vec3 tint = mix(violet, cyan, 0.5 + 0.5 * sin(x*3.0 + fi));
-    color += tint * envelope * (glow(d, 0.0011) * (0.14 + packet * 0.65) + glow(d, 0.018) * 0.06);
-  }
-  // Low orbital horizon: a sparse curved grid and circulating light below the entrance.
-  for (int i = 0; i < 4; i++) {
-    float fi = float(i);
-    float arc = 0.045 + fi * 0.013 - x*x * (0.24 + fi * 0.035);
-    float d = uv.y - arc;
-    float packet = pow(0.5 + 0.5 * cos(x * 9.0 + uTime * 0.4 - fi), 24.0);
-    color += mix(violet, cyan, fi / 4.0) * (glow(d, 0.0008) * (0.12 + packet * 0.5) + glow(d, 0.009) * 0.055);
-  }
-  float horizonFog = glow(uv.y - 0.07, 0.05) * exp(-x*x*7.0);
-  color += mix(violet, cyan, uv.x) * horizonFog * 0.065;
-  // Sparse drifting light specks confined to the upper and lower atmosphere.
-  vec2 grid = vec2(uv.x * max(uAspect, 0.75), uv.y + uTime * 0.003) * 90.0;
-  vec2 cell = floor(grid);
-  float seed = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
-  float dust = glow(length(fract(grid)-0.5), 0.085) * step(0.91, seed);
-  float region = smoothstep(0.76, 0.94, uv.y) + (1.0-smoothstep(0.07,0.18,uv.y));
-  color += mix(violet, cyan, seed) * dust * region * (0.6 + 0.4*sin(uTime+seed*30.0));
-  gl_FragColor = vec4(color * edgeFade, 1.0);
-}`
-
-function SpaceVeil({ motion }: { motion: SceneMotion }) {
-  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uAspect: { value: 1 } }), [])
-  useFrame(({ size, gl }) => {
-    uniforms.uTime.value = motion.time
-    uniforms.uAspect.value = size.width / size.height
-    gl.domElement.dataset.atmosphere = 'aurora-horizon'
-  })
-  return <mesh frustumCulled={false} renderOrder={-10}>
-    <planeGeometry args={[2, 2]} />
-    <shaderMaterial vertexShader={spaceVeilVertex} fragmentShader={spaceVeilFragment} uniforms={uniforms} transparent depthTest={false} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
   </mesh>
 }
 
@@ -555,14 +484,32 @@ function PointerTrail({ motion }: { motion: SceneMotion }) {
   </points>
 }
 
-type SceneProps = { motion: SceneMotion; mobile: boolean; coreAnchor: RefObject<HTMLDivElement | null>; onReady: () => void; onLost: () => void }
+type SceneProps = { motion: SceneMotion; mobile: boolean; sceneAnchor: RefObject<HTMLElement | null>; onReady: () => void; onLost: () => void }
 
-function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
+function Space({ motion, mobile, sceneAnchor, onReady, onLost }: SceneProps) {
   const { gl, camera, size, invalidate } = useThree()
   const initialized = useRef(false)
   const frames = useRef(0)
   const lastSize = useRef('')
   const projectedCore = useMemo(() => new THREE.Vector3(), [])
+  const stage = useRef({ x: 0, y: 0, width: 1, height: 1 })
+  const layoutRevision = useRef(0)
+  useEffect(() => {
+    const element = sceneAnchor.current
+    if (!element) return
+    const update = () => {
+      const bounds = element.getBoundingClientRect()
+      const canvasBounds = gl.domElement.getBoundingClientRect()
+      stage.current = { x: bounds.x-canvasBounds.x, y: bounds.y-canvasBounds.y, width: bounds.width, height: bounds.height }
+      layoutRevision.current++
+      invalidate()
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    observer.observe(gl.domElement)
+    update()
+    return () => observer.disconnect()
+  }, [sceneAnchor, gl, invalidate])
   useEffect(() => {
     const canvas = gl.domElement
     canvas.dataset.bloom = 'mipmap-hdr'
@@ -577,12 +524,13 @@ function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
   useFrame((_, delta) => {
     if (motion.running && motion.visible) motion.time += Math.min(delta, 0.12) * motion.speed
     const t = motion.time
-    const portrait = size.width < 650
-    const distance = portrait ? 13.4 : size.width < 1000 ? 10.7 : 8.7
+    const panel = stage.current
+    const radiusPixels = Math.max(80, Math.min(panel.width, panel.height) * 0.45)
+    const distance = size.height * 2.85 / (2 * Math.tan(42 * Math.PI / 360) * radiusPixels)
     const azimuth = Math.sin(t * 0.085) * 0.145
     const targetX = Math.sin(azimuth) * distance + motion.pointer.x * 0.64
-    const targetY = 0.4 + Math.sin(t * 0.16) * 0.23 + motion.pointer.y * 0.3
-    const sizeKey = `${size.width}/${size.height}`
+    const targetY = 0.55 + Math.sin(t * 0.16) * 0.23 + motion.pointer.y * 0.3
+    const sizeKey = `${size.width}/${size.height}/${layoutRevision.current}`
     const resized = lastSize.current !== sizeKey
     lastSize.current = sizeKey
     // Paused frames retain the same camera, so pointer input cannot move a frozen scene.
@@ -591,17 +539,14 @@ function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
       camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetX, interpolate ? 0.026 : 1)
       camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetY, interpolate ? 0.026 : 1)
       camera.position.z = THREE.MathUtils.lerp(camera.position.z, Math.cos(azimuth) * distance, interpolate ? 0.035 : 1)
-      camera.lookAt(0, -0.52, 0)
+      camera.lookAt(0, 0.15, 0)
+      ;(camera as THREE.PerspectiveCamera).setViewOffset(size.width, size.height, size.width/2-panel.x-panel.width/2, size.height/2-panel.y-panel.height/2, size.width, size.height)
     }
     // Project the actual sphere origin after camera motion; never approximate it with viewport percentages.
     camera.updateMatrixWorld()
     projectedCore.set(0, 0.15, 0).project(camera)
     const coreX = (projectedCore.x * 0.5 + 0.5) * size.width
     const coreY = (-projectedCore.y * 0.5 + 0.5) * size.height
-    if (coreAnchor.current) {
-      coreAnchor.current.style.left = `${coreX}px`
-      coreAnchor.current.style.top = `${coreY}px`
-    }
     gl.domElement.dataset.coreX = coreX.toFixed(2)
     gl.domElement.dataset.coreY = coreY.toFixed(2)
     frames.current++
@@ -611,19 +556,19 @@ function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
       gl.domElement.dataset.scenePreset = motion.variant
       gl.domElement.dataset.corePulse = (1 + Math.sin(motion.time * 0.85) * 0.055).toFixed(4)
       gl.domElement.dataset.bloomIntensity = String(motion.bloom)
+      gl.domElement.dataset.surfaceFlow = 'latitude-spiral-sweep'
     }
     if (!initialized.current) { initialized.current = true; onReady() }
   }, -100)
   return <>
-    <color attach="background" args={['#020617']} />
-    <SpaceVeil motion={motion} />
+    <color attach="background" args={['#040711']} />
     <PointField foreground={false} motion={motion} mobile={mobile} />
     <PointField foreground={false} middle motion={motion} mobile={mobile} />
     <Halo position={[-1.2, 0.15, -2.2]} color={violet} scale={8} motion={motion} />
     <Halo position={[1.5, 0.7, -2.4]} color={cyan} scale={7} motion={motion} />
     <group position={[0, 0.15, 0]}>
-      <EnergyCore motion={motion} />
-      <InternalFlow motion={motion} mobile={mobile} />
+      <EnergyCore motion={motion} mobile={mobile} />
+
       <NeuralLinks motion={motion} mobile={mobile} />
       <Orbit radius={2.55} tilt={[1.12, 0.38, -0.24]} speed={0.19} motion={motion} />
       <Orbit radius={2.78} tilt={[0.4, 0.7, 0.58]} speed={-0.14} purple motion={motion} />
@@ -638,8 +583,8 @@ function Space({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
   </>
 }
 
-export default function NeuralScene({ motion, mobile, coreAnchor, onReady, onLost }: SceneProps) {
+export default function NeuralScene({ motion, mobile, sceneAnchor, onReady, onLost }: SceneProps) {
   return <Canvas camera={{ position: [0, 0.4, mobile ? 13.4 : 8.7], fov: 42, near: 0.1, far: 90 }} dpr={[1, mobile ? 1.25 : 1.5]} gl={{ antialias: false, alpha: false, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping }} frameloop={motion.running && motion.visible ? 'always' : 'demand'} fallback={<div className="scene-fallback" aria-hidden="true" />}>
-    <Space motion={motion} mobile={mobile} coreAnchor={coreAnchor} onReady={onReady} onLost={onLost} />
+    <Space motion={motion} mobile={mobile} sceneAnchor={sceneAnchor} onReady={onReady} onLost={onLost} />
   </Canvas>
 }
