@@ -7,7 +7,5 @@
 <p align="center">
   <a href="https://github.com/ZLongLab/DocumentAssistant">DocumentAssistant ↗</a>
   &nbsp; · &nbsp;
-  <a href="https://zlonglab.github.io/">ZL Workspace</a>
-  &nbsp; · &nbsp;
-  <a href="https://zlonglab.github.io/">Playground</a>
+  <a href="https://zlonglab.github.io/">ZL AI LAB ↗</a>
 </p>

@@ -31,8 +31,9 @@ npm run preview
 ## 入口与视觉
 
 - DocumentAssistant：当前主要项目，连接现有仓库。
-- ZL Workspace：个人工具与资源入口面板。
-- Playground：实时场景模式、运动速度和 Bloom 调节实验。
+- GitHub：直接访问个人主页。
+
+首页只保留中心 Logo、品牌与短标语、一个主要工具入口及小型动画暂停按钮。
 
 `src/content.ts` 配置入口；`src/NeuralScene.tsx` 定义 3D 场景；`src/styles.css` 控制界面。页面支持响应式布局、动画暂停、减少动态效果偏好和 WebGL 回退。
 
