@@ -3,8 +3,9 @@ import type { RefObject } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Bloom, EffectComposer } from '@react-three/postprocessing'
 import * as THREE from 'three'
+import { CommandCore, MechanicalShell, ProjectionDeck, Shockwave, DocumentNodes } from './SceneEnhancements'
 
-export type SceneMotion = { time: number; pointer: THREE.Vector2; pointerActive: boolean; pointerRevision: number; running: boolean; visible: boolean; variant: 'core' | 'flow' | 'orbit'; speed: number; bloom: number }
+export type SceneMotion = { time: number; pointer: THREE.Vector2; corePointer: THREE.Vector2; proximity: number; drag: THREE.Vector2; pulseAt: number; link: 'document' | 'github' | null; pointerActive: boolean; pointerRevision: number; running: boolean; visible: boolean; variant: 'core' | 'flow' | 'network'; speed: number; bloom: number }
 
 // Seeded randomness keeps geometry stable through React remounts.
 function random(seed: number) {
@@ -117,6 +118,10 @@ void main() {
 const surfaceVertex = `
 uniform float uTime;
 uniform float uScale;
+uniform float uNetwork;
+uniform float uFlow;
+uniform float uProximity;
+uniform vec2 uPointer;
 attribute float aSize;
 attribute float aPhase;
 attribute vec3 aColor;
@@ -129,6 +134,19 @@ void main() {
   latitude += sin(longitude * 3.0 + uTime * 0.5) * 0.018;
   longitude += latitude * 0.6 + sin(latitude * 12.0 + uTime * 0.4) * 0.055;
   vec3 p = radius * vec3(cos(longitude)*cos(latitude), sin(latitude), sin(longitude)*cos(latitude));
+  // Continuous GPU morphs keep the same particles through every scene mode.
+  float lane = floor(aPhase * 4.0);
+  vec3 network = floor(position * 2.0 + 0.5) / 2.0;
+  float angle = longitude * 1.5 + uTime * 0.8 + latitude * 3.0;
+  float height = latitude / 1.5708;
+  float funnel = 0.32 + 1.2 * pow(abs(height), 1.3);
+  vec3 flow = vec3(cos(angle) * funnel, height*1.7, sin(angle)*funnel);
+  flow *= 0.9 + 0.1*sin(lane+uTime);
+  p = mix(p, network, uNetwork);
+  p = mix(p, flow, uFlow);
+  vec3 attractor = vec3(uPointer.x*2.5, uPointer.y*2.5, 1.2);
+  float influence = exp(-length(p-attractor)*2.0)*uProximity;
+  p += (attractor-p)*influence*0.42;
   vec4 view = modelViewMatrix * vec4(p, 1.0);
   float scan = mod(uTime * 0.65, 4.8) - 2.4;
   float sweep = exp(-pow((p.y - scan) / 0.13, 2.0));
@@ -136,10 +154,11 @@ void main() {
   gl_Position = projectionMatrix * view;
   gl_PointSize = clamp(aSize * uScale * (1.0 + sweep * 1.5) / max(1.0, -view.z), 1.0, 7.0);
   vColor = mix(aColor, vec3(2.0, 3.0, 3.2), sweep * 0.85);
-  vAlpha = facing * (0.6 + 0.4 * sin(aPhase + uTime * 1.2)) + sweep * 0.6;
+  vAlpha = (facing * (0.6 + 0.4 * sin(aPhase + uTime * 1.2)) + sweep * 0.6) * (1.0-uNetwork*0.55);
 }`
 
 function EnergyCore({ motion, mobile }: { motion: SceneMotion; mobile: boolean }) {
+  const { gl } = useThree()
   const root = useRef<THREE.Group>(null!)
   const shader = useRef<THREE.ShaderMaterial>(null!)
   const cloud = useRef<THREE.Points>(null!)
@@ -165,10 +184,21 @@ function EnergyCore({ motion, mobile }: { motion: SceneMotion; mobile: boolean }
     return { positions, colors, sizes, phases }
   }, [mobile])
   const uniforms = useMemo(() => ({ uTime: { value: 0 } }), [])
-  const cloudUniforms = useMemo(() => ({ uTime: { value: 0 }, uScale: { value: 550 } }), [])
-  useFrame(() => {
+  const cloudUniforms = useMemo(() => ({ uTime: { value: 0 }, uScale: { value: 550 }, uNetwork: { value: 0 }, uFlow: { value: 0 }, uProximity: { value: 0 }, uPointer: { value: new THREE.Vector2() } }), [])
+  const morph = useRef({ network: 0, flow: 0, proximity: 0 })
+  useFrame((_, delta) => {
     shader.current.uniforms.uTime.value = motion.time
     cloudShader.current.uniforms.uTime.value = motion.time
+    const factor = motion.running ? 1-Math.exp(-delta*3.2) : 0
+    morph.current.network = THREE.MathUtils.lerp(morph.current.network, motion.variant==='network'?1:0, factor)
+    morph.current.flow = THREE.MathUtils.lerp(morph.current.flow, motion.variant==='flow'?1:0, factor)
+    morph.current.proximity = THREE.MathUtils.lerp(morph.current.proximity, motion.proximity, factor)
+    const u = cloudShader.current.uniforms
+    u.uNetwork.value = morph.current.network; u.uFlow.value = morph.current.flow
+    u.uProximity.value = morph.current.proximity; u.uPointer.value.copy(motion.corePointer)
+    gl.domElement.dataset.networkMorph = u.uNetwork.value.toFixed(3)
+    gl.domElement.dataset.flowMorph = u.uFlow.value.toFixed(3)
+    gl.domElement.dataset.attraction = u.uProximity.value.toFixed(3)
     cloud.current.rotation.y = motion.time * 0.2
     cloud.current.rotation.z = Math.sin(motion.time * 0.22) * 0.18
     root.current.rotation.y = motion.time * 0.09
@@ -257,7 +287,7 @@ function NeuralLinks({ motion, mobile }: { motion: SceneMotion; mobile: boolean 
     links.current.forEach(([a, b], i) => {
       data.linePosition.set(data.position.subarray(a * 3, a * 3 + 3), i * 6)
       data.linePosition.set(data.position.subarray(b * 3, b * 3 + 3), i * 6 + 3)
-      const strength = (0.015 + (Math.sin(time * 1.2 + i * 0.67) + 1) * 0.018) * (0.15 + 0.85 * fade) * (motion.variant === 'flow' ? 0.45 : 1)
+      const strength = (0.015 + (Math.sin(time * 1.2 + i * 0.67) + 1) * 0.018) * (0.15 + 0.85 * fade) * (motion.variant === 'flow' ? 0.45 : motion.variant === 'network' ? 3 : 1)
       for (let k = 0; k < 3; k++) {
         data.lineColor[i * 6 + k] = data.nodeColor[a * 3 + k] * strength
         data.lineColor[i * 6 + k + 3] = data.nodeColor[b * 3 + k] * strength
@@ -328,7 +358,7 @@ function Orbit({ radius, tilt, speed, purple, motion }: { radius: number; tilt: 
     return [Math.cos(angle) * radius, Math.sin(angle) * radius, 0]
   }).flat()), [radius])
   useFrame(() => {
-    const orbitalSpeed = speed * (motion.variant === 'orbit' ? 2.7 : 1.8)
+    const orbitalSpeed = speed * (motion.variant === 'network' ? 2.7 : 1.8)
     ring.current.rotation.z = tilt[2] + motion.time * orbitalSpeed * 0.25
     ring.current.rotation.x = tilt[0] + Math.sin(motion.time * 0.18 + radius) * 0.13
     ring.current.rotation.y = tilt[1] + Math.sin(motion.time * 0.11 + radius) * 0.18
@@ -494,6 +524,7 @@ function Space({ motion, mobile, sceneAnchor, onReady, onLost }: SceneProps) {
   const projectedCore = useMemo(() => new THREE.Vector3(), [])
   const stage = useRef({ x: 0, y: 0, width: 1, height: 1 })
   const layoutRevision = useRef(0)
+  const assembly = useRef<THREE.Group>(null!)
   useEffect(() => {
     const element = sceneAnchor.current
     if (!element) return
@@ -523,9 +554,13 @@ function Space({ motion, mobile, sceneAnchor, onReady, onLost }: SceneProps) {
   }, [gl, onLost, invalidate, motion])
   useFrame((_, delta) => {
     if (motion.running && motion.visible) motion.time += Math.min(delta, 0.12) * motion.speed
+    const smooth = motion.running ? 1-Math.exp(-delta*5) : 0
+    assembly.current.rotation.y = THREE.MathUtils.lerp(assembly.current.rotation.y, motion.drag.x, smooth)
+    assembly.current.rotation.x = THREE.MathUtils.lerp(assembly.current.rotation.x, motion.drag.y, smooth)
+    assembly.current.scale.setScalar(motion.running ? .75+.25*THREE.MathUtils.smoothstep(motion.time,.6,2.3) : 1)
     const t = motion.time
     const panel = stage.current
-    const radiusPixels = Math.max(80, Math.min(panel.width, panel.height) * 0.45)
+    const radiusPixels = Math.max(80, Math.min(panel.width, panel.height) * 0.42)
     const distance = size.height * 2.85 / (2 * Math.tan(42 * Math.PI / 360) * radiusPixels)
     const azimuth = Math.sin(t * 0.085) * 0.145
     const targetX = Math.sin(azimuth) * distance + motion.pointer.x * 0.64
@@ -557,6 +592,8 @@ function Space({ motion, mobile, sceneAnchor, onReady, onLost }: SceneProps) {
       gl.domElement.dataset.corePulse = (1 + Math.sin(motion.time * 0.85) * 0.055).toFixed(4)
       gl.domElement.dataset.bloomIntensity = String(motion.bloom)
       gl.domElement.dataset.surfaceFlow = 'latitude-spiral-sweep'
+      gl.domElement.dataset.uplink = motion.link || 'idle'
+      gl.domElement.dataset.dragRotation = assembly.current.rotation.y.toFixed(3)
     }
     if (!initialized.current) { initialized.current = true; onReady() }
   }, -100)
@@ -566,15 +603,19 @@ function Space({ motion, mobile, sceneAnchor, onReady, onLost }: SceneProps) {
     <PointField foreground={false} middle motion={motion} mobile={mobile} />
     <Halo position={[-1.2, 0.15, -2.2]} color={violet} scale={8} motion={motion} />
     <Halo position={[1.5, 0.7, -2.4]} color={cyan} scale={7} motion={motion} />
-    <group position={[0, 0.15, 0]}>
+    <group ref={assembly} position={[0, 0.15, 0]}>
+      <CommandCore motion={motion} />
       <EnergyCore motion={motion} mobile={mobile} />
-
+      <MechanicalShell motion={motion} />
+      <DocumentNodes motion={motion} />
       <NeuralLinks motion={motion} mobile={mobile} />
       <Orbit radius={2.55} tilt={[1.12, 0.38, -0.24]} speed={0.19} motion={motion} />
       <Orbit radius={2.78} tilt={[0.4, 0.7, 0.58]} speed={-0.14} purple motion={motion} />
       <Orbit radius={2.34} tilt={[0.65, -0.65, -0.65]} speed={0.11} motion={motion} />
       <Orbit radius={1.15} tilt={[1.2, -0.4, 0.3]} speed={-0.48} purple motion={motion} />
     </group>
+    <ProjectionDeck motion={motion} />
+    <group position={[0,.15,0]}><Shockwave motion={motion} /></group>
     <PointField foreground motion={motion} mobile={mobile} />
     <PointerTrail motion={motion} />
     <EffectComposer multisampling={0} resolutionScale={mobile ? 0.55 : 0.8}>

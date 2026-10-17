@@ -24,8 +24,8 @@ function NetworkGraph() {
   </svg>
 }
 
-export function HoloCard({ gateway, href }: { gateway?: boolean; href: string }) {
-  return <a className={`holo-card ${gateway ? 'gateway-card' : 'document-card'}`} href={href} target="_blank" rel="noopener noreferrer" aria-label={gateway ? 'GitHub Gateway，打开 ZLongLab GitHub 主页' : 'DocumentAssistant，打开项目仓库'}>
+export function HoloCard({ gateway, href, onActivate, onDeactivate }: { gateway?: boolean; href: string; onActivate: () => void; onDeactivate: () => void }) {
+  return <a className={`holo-card ${gateway ? 'gateway-card' : 'document-card'}`} href={href} target="_blank" rel="noopener noreferrer" onPointerEnter={event => { if(event.pointerType==='mouse') onActivate() }} onPointerLeave={event => { if(event.pointerType==='mouse' && document.activeElement!==event.currentTarget) onDeactivate() }} onFocus={onActivate} onBlur={onDeactivate} aria-label={gateway ? 'GitHub Gateway，打开 ZLongLab GitHub 主页' : 'DocumentAssistant，打开项目仓库'}>
     <div className="card-top"><span className="card-icon">{gateway ? <><Github size={20} strokeWidth={1.4} /><GitBranch size={13} /></> : <><FileText size={21} strokeWidth={1.4} /><Sparkles size={12} /></>}</span><span className="card-number">{gateway ? '02' : '01'}</span></div>
     <h2><span className="card-index">{gateway ? '02' : '01'} //</span> {gateway ? 'GitHub Gateway' : 'DocumentAssistant'}<ArrowUpRight className="card-arrow" size={17} /></h2>
     <div className="card-visual">{gateway ? <NetworkGraph /> : <Waveform />}</div>

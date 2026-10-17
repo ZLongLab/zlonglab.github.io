@@ -99,7 +99,33 @@ try {
   assert.ok(await page.locator('.motion-control').isDisabled())
   const reducedA = await page.screenshot({ fullPage: true })
   await page.waitForTimeout(300)
-  assert.ok(reducedA.equals(await page.screenshot({ fullPage: true })))
+  const reducedB = await page.screenshot({ fullPage: true })
+  if (!reducedA.equals(reducedB)) {
+    await writeFile('qa/reduced-before.png',reducedA)
+    await writeFile('qa/reduced-after.png',reducedB)
+    // Chrome can round a few GPU-composited gradient pixels differently after repaint.
+    // Permit at most eight pixels with one channel level of difference; real motion fails.
+    const difference = await page.evaluate(async ({ first, second }) => {
+      async function pixels(base64) {
+        const image = new Image(); image.src = 'data:image/png;base64,'+base64; await image.decode()
+        const surface = document.createElement('canvas'); surface.width=image.width; surface.height=image.height
+        const context = surface.getContext('2d'); context.drawImage(image,0,0)
+        return context.getImageData(0,0,image.width,image.height).data
+      }
+      const a=await pixels(first), b=await pixels(second)
+      let count=0, maximum=0
+      for(let i=0;i<a.length;i+=4) {
+        let changed=false
+        for(let j=0;j<4;j++) { const delta=Math.abs(a[i+j]-b[i+j]); if(delta) changed=true; maximum=Math.max(maximum,delta) }
+        if(changed) count++
+      }
+      return { count, maximum }
+    }, { first:reducedA.toString('base64'), second:reducedB.toString('base64') })
+    assert.ok(difference.count<=8 && difference.maximum<=1, `Reduced motion pixel difference: ${JSON.stringify(difference)}`)
+  }
+  const frozenTime = await canvas.getAttribute('data-simulation-time')
+  await page.waitForTimeout(150)
+  assert.equal(await canvas.getAttribute('data-simulation-time'), frozenTime)
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.waitForFunction(() => !document.querySelector('.motion-control').disabled)
   assert.ok(await page.locator('.motion-control').isEnabled())
